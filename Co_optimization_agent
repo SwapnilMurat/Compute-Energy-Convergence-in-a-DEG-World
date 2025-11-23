@@ -1,0 +1,124 @@
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report
+import numpy as np
+
+def train_co_optimization_model(data_path='compute_energy_dataset.csv'):
+    try:
+        df = pd.read_csv(data_path)
+    except FileNotFoundError:
+        print(f"Error: Dataset not found at {data_path}. Please run the data generator first.")
+        return None, None
+
+    features = ['Carbon_Intensity_gCO2kWh', 'Energy_Price_GBPkWh', 
+                'Compute_Demand_Jobs', 'Flexibility_Window_Hours', 'Storage_SoC']
+    X = df[features]
+    y = df['Optimal_Action']
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+
+    y_pred = model.predict(X_test)
+    print("\n--- ML Model Performance (RandomForestClassifier) ---")
+    print(classification_report(y_test, y_pred, labels=[0, 1, 2], target_names=['Run', 'Defer', 'Use Storage']))
+    
+    return model, features
+
+
+class BecknAgent:
+    def __init__(self, name):
+        self.name = name
+        self.catalog = {}
+        self.obp_counter = 1000
+
+    def publish_catalog(self, item_id, details):
+        self.catalog[item_id] = details
+        print(f"[{self.name}] Published Catalog Item {item_id}: {details['description']}")
+
+    def receive_order(self, order_details):
+        obp_id = f"OBP-{self.obp_counter}"
+        self.obp_counter += 1
+        print(f"[{self.name}] Received Order: {order_details['action']} for Job {order_details['job_id']}. OBP ID: {obp_id}")
+        return obp_id
+
+class GridCoOptimizationAgent:
+    def __init__(self, model, features, compute_agent, storage_agent):
+        self.model = model
+        self.features = features
+        self.compute_agent = compute_agent
+        self.storage_agent = storage_agent
+        self.action_map = {0: "Run as Scheduled", 1: "Defer Workload", 2: "Schedule Storage Discharge"}
+
+    def co_optimize(self, current_data):
+        # Ingest and Forecast (Simplified: use current_data)
+        input_df = pd.DataFrame([current_data], columns=self.features)
+        
+        # ML Core Prediction
+        optimal_action_code = self.model.predict(input_df)[0]
+        optimal_action = self.action_map[optimal_action_code]
+        
+        print(f"\n[Grid Co-optimization Agent] Real-time Data: Carbon={current_data['Carbon_Intensity_gCO2kWh']:.0f}, Price={current_data['Energy_Price_GBPkWh']:.2f}, Demand={current_data['Compute_Demand_Jobs']}")
+        print(f"[Grid Co-optimization Agent] ML Prediction: {optimal_action}")
+
+        # Initiate Beckn Workflow (Order/Fulfillment)
+        job_id = "AI_Training_Job_123"
+        
+        if optimal_action_code == 1:
+            order = {'job_id': job_id, 'action': 'DEFER', 'defer_until': 'T+4h'}
+            self.compute_agent.receive_order(order)
+        
+        elif optimal_action_code == 2:
+            order = {'job_id': job_id, 'action': 'DISCHARGE', 'duration_min': 60}
+            self.storage_agent.receive_order(order)
+            self.compute_agent.receive_order({'job_id': job_id, 'action': 'RUN_ON_STORAGE'})
+            
+        else:
+            print(f"[Grid Co-optimization Agent] No action required. Job {job_id} runs as scheduled.")
+
+
+if __name__ == '__main__':
+    model, features = train_co_optimization_model()
+    if model is None:
+        exit()
+
+    compute_agent = BecknAgent("Compute Agent")
+    storage_agent = BecknAgent("Storage Agent")
+    grid_agent = GridCoOptimizationAgent(model, features, compute_agent, storage_agent)
+
+    compute_agent.publish_catalog("J123", {'description': 'AI Inference Batch', 'flexibility_window': 4, 'energy_required_kWh': 50})
+
+    print("\n" + "="*50)
+    print("SCENARIO 1: High Carbon/Price Spike (DEFER)")
+    high_carbon_data = {
+        'Carbon_Intensity_gCO2kWh': 350,
+        'Energy_Price_GBPkWh': 0.28,
+        'Compute_Demand_Jobs': 4500,
+        'Flexibility_Window_Hours': 4,
+        'Storage_SoC': 0.5
+    }
+    grid_agent.co_optimize(high_carbon_data)
+
+    print("\n" + "="*50)
+    print("SCENARIO 2: Low Carbon/Price (RUN)")
+    low_carbon_data = {
+        'Carbon_Intensity_gCO2kWh': 80,
+        'Energy_Price_GBPkWh': 0.10,
+        'Compute_Demand_Jobs': 4500,
+        'Flexibility_Window_Hours': 4,
+        'Storage_SoC': 0.5
+    }
+    grid_agent.co_optimize(low_carbon_data)
+
+    print("\n" + "="*50)
+    print("SCENARIO 3: High Price, High SoC (USE STORAGE)")
+    storage_data = {
+        'Carbon_Intensity_gCO2kWh': 180,
+        'Energy_Price_GBPkWh': 0.25,
+        'Compute_Demand_Jobs': 3000,
+        'Flexibility_Window_Hours': 0, # Not flexible, must run now
+        'Storage_SoC': 0.9
+    }
+    grid_agent.co_optimize(storage_data)
