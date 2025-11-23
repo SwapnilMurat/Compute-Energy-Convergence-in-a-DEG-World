@@ -1,0 +1,75 @@
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+
+def generate_synthetic_data(days=7, interval_minutes=30):
+    start_time = datetime(2025, 11, 25, 0, 0)
+    end_time = start_time + timedelta(days=days)
+    time_range = pd.date_range(start=start_time, end=end_time, freq=f'{interval_minutes}min', inclusive='left')
+    n_points = len(time_range)
+
+    Grid Signals (Carbon Intensity and Price) - Daily/Weekly patterns
+    Carbon Intensity (gCO2/kWh): Low overnight, high during peak hours
+    base_carbon = 150
+    daily_carbon_cycle = np.sin(np.linspace(0, 4 * np.pi, n_points)) * 50 + 50
+    carbon_intensity = base_carbon + daily_carbon_cycle + np.random.normal(0, 10, n_points)
+    carbon_intensity = np.clip(carbon_intensity, 50, 350) # Clip to realistic range
+
+    Energy Price (£/kWh): Low overnight, high during peak hours
+    base_price = 0.15
+    daily_price_cycle = np.sin(np.linspace(0, 4 * np.pi, n_points)) * 0.05 + 0.05
+    energy_price = base_price + daily_price_cycle + np.random.normal(0, 0.01, n_points)
+    energy_price = np.clip(energy_price, 0.08, 0.30) # Clip to realistic range
+
+    Computing Workload Demand (AI Inferences/Jobs)
+    base_demand = 1000
+    demand_spikes = np.zeros(n_points)
+    # Introduce random spikes (e.g., 5% of the time)
+    spike_indices = np.random.choice(n_points, size=int(n_points * 0.05), replace=False)
+    demand_spikes[spike_indices] = np.random.randint(500, 3000, size=len(spike_indices))
+    compute_demand = base_demand + demand_spikes + np.random.normal(0, 50, n_points)
+    compute_demand = np.clip(compute_demand, 500, 5000).astype(int)
+
+    Workload Flexibility Window (Simplified: Deferral window in hours)
+    # 0 means no flexibility, >0 means deferrable by that many hours
+    flexibility_window = np.random.choice([0, 1, 2, 4, 8], size=n_points, p=[0.4, 0.2, 0.2, 0.1, 0.1])
+
+    Energy Storage State (Simplified: State of Charge - SoC)
+    # Simulating a battery that charges/discharges
+    soc = np.zeros(n_points)
+    soc[0] = 0.5 # Start at 50%
+    for i in range(1, n_points):
+        # Simple random walk for SoC, constrained by 0 and 1
+        soc[i] = np.clip(soc[i-1] + np.random.uniform(-0.02, 0.02), 0.1, 0.9)
+    
+    Target Variable (Simulated Optimal Action - for ML training/labeling)
+    Optimal action is a function of high demand, high carbon, and high price.
+    optimal_action = np.zeros(n_points, dtype=int)
+    
+    High Demand + High Carbon + High Price -> Defer (1)
+    high_carbon_price = (carbon_intensity > 200) & (energy_price > 0.20)
+    high_demand = compute_demand > 2000
+    defer_condition = high_carbon_price & high_demand & (flexibility_window > 0)
+    optimal_action[defer_condition] = 1
+    
+    High Demand + High Price + Low SoC -> Use Storage (2)
+    use_storage_condition = high_demand & (energy_price > 0.25) & (soc > 0.5) & (optimal_action == 0)
+    optimal_action[use_storage_condition] = 2
+
+    data = pd.DataFrame({
+        'Timestamp': time_range,
+        'Carbon_Intensity_gCO2kWh': carbon_intensity,
+        'Energy_Price_GBPkWh': energy_price,
+        'Compute_Demand_Jobs': compute_demand,
+        'Flexibility_Window_Hours': flexibility_window,
+        'Storage_SoC': soc,
+        'Optimal_Action': optimal_action # 0: Run, 1: Defer, 2: Use Storage
+    })
+
+    return data
+
+if __name__ == '__main__':
+    df = generate_synthetic_data(days=30)
+    df.to_csv('compute_energy_dataset.csv', index=False)
+    print("Synthetic dataset 'compute_energy_dataset.csv' generated successfully.")
+    print(df.head())
